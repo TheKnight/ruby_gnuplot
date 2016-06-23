@@ -1,21 +1,21 @@
 # Methods and variables for interacting with the gnuplot process.  Most of
 # these methods are for sending data to a gnuplot process, not for reading from
-# it.  Most of the methods are implemented as added methods to the built in 
+# it.  Most of the methods are implemented as added methods to the built in
 # classes.
 
 require 'matrix'
- 
+
 module Gnuplot
 
   # Trivial implementation of the which command that uses the PATH environment
   # variable to attempt to find the given application.  The application must
   # be executable and reside in one of the directories in the PATH environment
   # to be found.  The first match that is found will be returned.
-  # 
+  #
   # bin [String] The name of the executable to search for.
-  # 
+  #
   # Return the full path to the first match or nil if no match is found.
-  # 
+  #
   def Gnuplot.which ( bin )
     if RUBY_PLATFORM =~ /mswin|mingw/
       all = [bin, bin + '.exe']
@@ -41,18 +41,18 @@ module Gnuplot
 
     # This is an implementation that works when the which command is
     # available.
-    # 
+    #
     # IO.popen("which #{bin}") { |io| return io.readline.chomp }
 
     return nil
-  end 
+  end
 
   # Find the path to the gnuplot executable.  The name of the executable can
   # be specified using the RB_GNUPLOT environment variable but will default to
-  # the command 'gnuplot'.  
-  # 
+  # the command 'gnuplot'.
+  #
   # persist [bool] Add the persist flag to the gnuplot executable
-  # 
+  #
   # Return the path to the gnuplot executable or nil if one cannot be found.
   def Gnuplot.gnuplot( persist = true )
     exe_loc = which( ENV['RB_GNUPLOT'] || 'gnuplot' )
@@ -61,15 +61,15 @@ module Gnuplot
     cmd += " -persist" if persist
     cmd
   end
-    
+
   # Open a gnuplot process that exists in the current PATH.  If the persist
   # flag is true then the -persist flag is added to the command line.  The
-  # path to the gnuplot executable is determined using the 'which' command. 
+  # path to the gnuplot executable is determined using the 'which' command.
   #
   # See the gnuplot documentation for information on the persist flag.
   #
   # <b>todo</b> Add a method to pass the gnuplot path to the function.
-  
+
   def Gnuplot.open( persist=true )
     cmd = Gnuplot.gnuplot( persist )
     IO::popen( cmd, "w+") { |io|
@@ -77,11 +77,11 @@ module Gnuplot
       io.close_write
       @output = io.read
     }
-    return @output	
+    return @output
   end
-  
-    
-    
+
+
+
   # Holds command information and performs the formatting of that command
   # information to a Gnuplot process.  When constructing a new plot for
   # gnuplot, this is the first object that must be instantiated.  On this
@@ -97,10 +97,11 @@ module Gnuplot
       @settings = []
       @arbitrary_lines = []
       @data = []
+      @styles = []
       yield self if block_given?
-      puts "writing this to gnuplot:\n" + to_gplot + "\n" if $VERBOSE
+      $stderr.puts "writing this to gnuplot:\n" + to_gplot + "\n" if $VERBOSE
 
-      if io    
+      if io
         io << to_gplot
         io << store_datasets
       end
@@ -118,7 +119,7 @@ module Gnuplot
 
     # Set a variable to the given value.  +Var+ must be a gnuplot variable and
     # +value+ must be the value to set it to.  Automatic quoting will be
-    # performed if the variable requires it.  
+    # performed if the variable requires it.
     #
     # This is overloaded by the +method_missing+ method so see that for more
     # readable code.
@@ -147,6 +148,64 @@ module Gnuplot
       end
     end
 
+    class Style
+      attr_accessor :linestyle, :linetype, :linewidth, :linecolor,
+        :pointtype, :pointsize, :fill, :index
+
+      alias :ls :linestyle
+      alias :lt :linetype
+      alias :lw :linewidth
+      alias :lc :linecolor
+      alias :pt :pointtype
+      alias :ps :pointsize
+      alias :fs :fill
+
+      alias :ls= :linestyle=
+      alias :lt= :linetype=
+      alias :lw= :linewidth=
+      alias :lc= :linecolor=
+      alias :pt= :pointtype=
+      alias :ps= :pointsize=
+      alias :fs= :fill=
+
+      STYLES = [:ls, :lt, :lw, :lc, :pt, :ps, :fs]
+
+      def Style.increment_index
+        @index ||= 0
+        @index += 1
+
+        @index
+      end
+
+      def initialize
+        STYLES.each do |s|
+          send("#{s}=", nil)
+        end
+        yield self if block_given?
+
+        # only set the index if the user didn't do it
+        @index = Style::increment_index if index.nil?
+      end
+
+      def to_s
+        str = "set style line #{index}"
+        STYLES.each do |s|
+          style = send(s)
+          if not style.nil?
+            str << " #{s} #{style}"
+          end
+        end
+
+        str
+      end
+    end
+
+    # Create a gnuplot linestyle
+    def style &blk
+      s = Style.new &blk
+      @styles << s
+      s
+    end
 
     def add_data ( ds )
       @data << ds
@@ -157,6 +216,7 @@ module Gnuplot
       @settings.each do |setting|
           io << setting.map(&:to_s).join(" ") << "\n"
       end
+      @styles.each{|s| io << s.to_s << "\n"}
       @arbitrary_lines.each{|line| io << line << "\n" }
 
       io
@@ -170,22 +230,25 @@ module Gnuplot
         v = @data.collect { |ds| ds.to_gplot }
       	io << v.compact.join("e\n")
       end
-      
+
       io
     end
   end
+
+  # Analogous to Plot class, holds command information and performs the formatting of that command
+  # information to a Gnuplot process. Should be used when for drawing 3D plots.
 
   class SPlot < Plot
 
     def initialize (io = nil, cmd = "splot")
       super
     end
-    
+
+    # Currently using the implementation from parent class Plot.
+    # Leaving the method explicit here, though, as to allow an specific
+    # implementation for SPlot in the future.
     def to_gplot (io = "")
-      @settings.each do |setting|
-          io << setting.map(&:to_s).join(" ") << "\n"
-      end
-      io
+      super
     end
 
   end
@@ -195,7 +258,7 @@ module Gnuplot
   # has a reference to the actual data being plotted as well as settings that
   # control the "plot" command.  The data object must support the to_gplot
   # command.
-  # 
+  #
   # +data+ The data that will be plotted.  The only requirement is that the
   # object understands the to_gplot method.
   #
@@ -206,33 +269,39 @@ module Gnuplot
   #
   # @todo Use the delegator to delegate to the data property.
 
-  class DataSet 
-    attr_accessor :title, :with, :using, :data, :linewidth, :linecolor, :matrix, :smooth, :axes
-  
+  class DataSet
+    attr_accessor :title, :with, :using, :data, :linewidth, :linecolor, :matrix, :smooth, :axes, :index, :linestyle
+
+    alias :ls :linestyle
+    alias :ls= :linestyle=
+
     def initialize (data = nil)
       @data = data
-      @title = @with = @using = @linewidth = @linecolor = @matrix = @smooth = @axes = nil # avoid warnings
+      @linestyle = @title = @with = @using = @linewidth = @linecolor = @matrix =
+          @smooth = @axes = @index = nil # avoid warnings
       yield self if block_given?
     end
-        
+
     def notitle
       @title = "notitle"
     end
 
     def plot_args (io = "")
-      
+
       # Order of these is important or gnuplot barfs on 'em
 
       io << ( (@data.instance_of? String) ? @data : "'-'" )
 
+      io << " index #{@index}" if @index
+
       io << " using #{@using}" if @using
-     
+
       io << " axes #{@axes}" if @axes
- 
+
       io << case @title
             when /notitle/ then " notitle"
             when nil       then ""
-            else " title '#{@title}'" 
+            else " title '#{@title}'"
             end
 
       io << " matrix" if @matrix
@@ -240,6 +309,7 @@ module Gnuplot
       io << " with #{@with}" if @with
       io << " linecolor #{@linecolor}" if @linecolor
       io << " linewidth #{@linewidth}" if @linewidth
+      io << " linestyle #{@linestyle.index}" if @linestyle
       io
     end
 
@@ -258,19 +328,20 @@ module Gnuplot
       else @data.to_gsplot
       end
     end
-    
+
   end
 end
 
 class Array
   def to_gplot
-    if ( self[0].kind_of? Array ) then
+    return "" if self.empty?
+
+    case self[0]
+    when Array
       tmp = self[0].zip( *self[1..-1] )
       tmp.collect { |a| a.join(" ") }.join("\n") + "\ne"
-    elsif ( self[0].kind_of? Numeric ) then
-      s = ""
-      self.length.times { |i| s << "#{self[i]}\n" }
-      s
+    when Numeric
+      self.join("\n")
     else
       self[0].zip( *self[1..-1] ).to_gplot
     end
@@ -278,7 +349,7 @@ class Array
 
   def to_gsplot
     f = ""
-    
+
     if ( self[0].kind_of? Array ) then
       x = self[0]
       y = self[1]
@@ -295,16 +366,16 @@ class Array
     else
       self[0].zip( *self[1..-1] ).to_gsplot
     end
-    
+
     f
   end
 end
-   
+
 class Matrix
   def to_gplot (x = nil, y = nil)
     xgrid = x || (0...self.column_size).to_a
     ygrid = y || (0...self.row_size).to_a
-  
+
     f = ""
     ygrid.length.times do |j|
       y = ygrid[j]
@@ -314,7 +385,7 @@ class Matrix
         end
       end
     end
-    
+
     f
   end
 
